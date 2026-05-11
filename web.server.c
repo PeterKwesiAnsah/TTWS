@@ -1,5 +1,6 @@
 #define __GNU_SOURCE
 
+#include "rio.h"
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -9,6 +10,8 @@
 #include <unistd.h>
 
 #define BACKLOG 1024
+#define MAXLINE 1024
+
 int main(int argc, char *argv[]) {
   if (argc != 2) {
     printf("Usage: %s <port>\n", argv[0]);
@@ -66,6 +69,18 @@ int main(int argc, char *argv[]) {
       printf("Connection from (%s, %s) client\n", host, serv);
     else
       printf("Connection from unknown client");
+    char *res = "Hello, World!\r\n";
+    // response
+    char buf[MAXLINE];
+    //response line
+    sprintf(buf, "HTTP/1.1 200 OK\r\n");
+    // response headers
+    sprintf(buf, "%sContent-Type: text/html\r\n", buf);
+    sprintf(buf, "%sContent-Length: %lu\r\n", buf, strlen(res));
+    // end of headers
+    sprintf(buf, "%s\r\n", buf);
+    rio_write(connfd, buf, strlen(buf));
+    rio_write(connfd, res, strlen(res));
   }
   return 0;
 }
