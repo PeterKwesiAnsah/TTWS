@@ -69,26 +69,30 @@ ssize_t rio_readb(rio *rp, void *buf, size_t len) {
 READ_FROM_BUFFER:
   if (rp->bytesleft == 0)
     goto FILL_IN_BUFFER;
-  numread = len > rp->bytesfill ? rp->bytesfill : len;
+  numread = len > rp->bytesleft ? rp->bytesleft : len;
   memcpy(cur, rp->buf, numread);
+  // mimics file offsets for seekable files
   rp->buf = rp->buf + numread;
   rp->bytesleft = rp->bytesleft - numread;
-  // short counts include 0, and rp->bytesfill
+  // short counts include 0, and rp->bytesleft
   return numread;
 
 FILL_IN_BUFFER:
-  rp->bytesfill = read(rp->fd, rp->rio_buf, RIO_BUFFER_SIZE);
+  rio_bytes_read = read(rp->fd, rp->rio_buf, RIO_BUFFER_SIZE);
   rio_bytes_read = rp->bytesfill;
-  if (rio_bytes_read  < 0) {
+  if (rio_bytes_read < 0) {
     // error
     if (errno == EINTR)
       goto FILL_IN_BUFFER;
     return -1;
   } else {
     // rio_bytes_read  >= 0
-    if (rio_bytes_read  == 0)
+    if (rio_bytes_read == 0)
       return 0;
-    rp->buf=rp->rio_buf;
+    rp->bytesfill = rio_bytes_read;
+    rp->buf = rp->rio_buf;
+    rp->bytesleft = rp->bytesfill;
+
     goto READ_FROM_BUFFER;
   }
 }
