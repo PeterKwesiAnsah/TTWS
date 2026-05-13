@@ -17,3 +17,4 @@ typedef struct rio rio;
 ssize_t rio_write(int fd, void *buf, size_t len);
 ssize_t rio_read(int fd, void *buf, size_t len);
 ssize_t rio_readb(rio *, void *buf, size_t len);
+ssize_t rio_readline(rio *, void *buf, size_t len);

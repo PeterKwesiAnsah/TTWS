@@ -1,11 +1,10 @@
 // Contains robust I/O functions for reading and writing to sockets
-// rio_read 0(EOF) or n
-// rio_readBuf 0(EOF) or n
 // rio_readLine n-1
 #include "rio.h"
 #include <asm-generic/errno-base.h>
 #include <assert.h>
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -23,7 +22,7 @@ ssize_t rio_write(int fd, void *buf, size_t len) {
       return -1;
     } else {
       // numread > 0
-      // If count is zero   and fd refers to a file other than a regular file,
+      // If count is zero and fd refers to a file other than a regular file,
       // the results are not specified.
       numleft -= numread;
       cur += numread;
@@ -79,7 +78,7 @@ READ_FROM_BUFFER:
 
 FILL_IN_BUFFER:
   rio_bytes_read = read(rp->fd, rp->rio_buf, RIO_BUFFER_SIZE);
-  rio_bytes_read = rp->bytesfill;
+
   if (rio_bytes_read < 0) {
     // error
     if (errno == EINTR)
@@ -90,9 +89,33 @@ FILL_IN_BUFFER:
     if (rio_bytes_read == 0)
       return 0;
     rp->bytesfill = rio_bytes_read;
+    rp->bytesleft = rio_bytes_read;
     rp->buf = rp->rio_buf;
-    rp->bytesleft = rp->bytesfill;
 
     goto READ_FROM_BUFFER;
   }
 }
+
+ssize_t rio_readline(rio *rp, void *buf, size_t len) {
+  char ch;
+  int numread = 0;
+  char *cur = buf;
+  int i = 1, n = 0;
+  for (; i < len; i++) {
+    n++;
+    numread = rio_readb(rp, &ch, 1);
+    if (numread < 0)
+      return -1;
+    else if (numread == 0) {
+      // 0
+      break;
+    } else {
+      // 1
+      *cur++ = ch;
+      if (ch == '\n')
+        break;
+    }
+  }
+  *cur = '\0';
+  return n - 1;
+};
