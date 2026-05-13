@@ -69,10 +69,23 @@ int main(int argc, char *argv[]) {
       printf("Connection from (%s, %s) client\n", host, serv);
     else
       printf("Connection from unknown client");
+
     char *res = "Hello, World!\r\n";
     // response
     char buf[MAXLINE];
-    //response line
+
+    // read packets from client
+    rio rp;
+    memset(&rp, 0, sizeof(rp));
+    rp.fd = connfd;
+
+    rio_readline(&rp, buf, MAXLINE);
+    while (strcmp(buf, "\r\n")) {
+      printf("%s\n", buf);
+      // fgets(buf, MAXLINE, stdin);
+      rio_readline(&rp, buf, MAXLINE);
+    }
+    // response line
     sprintf(buf, "HTTP/1.1 200 OK\r\n");
     // response headers
     sprintf(buf, "%sContent-Type: text/html\r\n", buf);
