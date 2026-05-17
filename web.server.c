@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
     socklen_t addr_len = sizeof(struct sockaddr_storage);
     int connfd = accept(listenfd, (struct sockaddr *)&client_addr, &addr_len);
     if (connfd < 0) {
-      fprintf(stderr, "failed to accept client connections");
+      fprintf(stderr, "failed to accept client connections\n");
       exit(1);
     }
     char host[NI_MAXHOST];
@@ -70,30 +70,30 @@ int main(int argc, char *argv[]) {
     else
       printf("Connection from unknown client");
 
-    char *res = "Hello, World!\r\n";
-    // response
-    char buf[MAXLINE];
+    // invoke the db client program
+    if (fork() == 0) {
+      // response
+      char buf[MAXLINE];
+      // read packets from client
+      rio rp;
+      memset(&rp, 0, sizeof(rp));
+      rp.fd = connfd;
 
-    // read packets from client
-    rio rp;
-    memset(&rp, 0, sizeof(rp));
-    rp.fd = connfd;
-
-    rio_readline(&rp, buf, MAXLINE);
-    while (strcmp(buf, "\r\n")) {
-      printf("%s\n", buf);
-      // fgets(buf, MAXLINE, stdin);
       rio_readline(&rp, buf, MAXLINE);
+      while (strcmp(buf, "\r\n")) {
+        printf("%s\n", buf);
+        rio_readline(&rp, buf, MAXLINE);
+      }
+
+      char *envp[] = {"PGHOST=localhost", "PGUSER=postgres", "PGPASSWORD=postgres", "PGPORT=5432", NULL};
+      char *argp[] = {NULL};
+
+      dup2(connfd, STDOUT_FILENO);
+      if (execve("./db.client", argp, envp) < 0) {
+        perror("execve");
+        exit(1);
+      };
     }
-    // response line
-    sprintf(buf, "HTTP/1.1 200 OK\r\n");
-    // response headers
-    sprintf(buf, "%sContent-Type: text/html\r\n", buf);
-    sprintf(buf, "%sContent-Length: %lu\r\n", buf, strlen(res));
-    // end of headers
-    sprintf(buf, "%s\r\n", buf);
-    rio_write(connfd, buf, strlen(buf));
-    rio_write(connfd, res, strlen(res));
   }
   return 0;
 }
