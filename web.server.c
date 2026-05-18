@@ -11,6 +11,8 @@
 
 #define BACKLOG 1024
 #define MAXLINE 1024
+#define METHOD_LENGTH 24
+#define HTTP_VERSION 24
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
@@ -69,23 +71,27 @@ int main(int argc, char *argv[]) {
       printf("Connection from (%s, %s) client\n", host, serv);
     else
       printf("Connection from unknown client");
+    char buf[MAXLINE];
+    char method[METHOD_LENGTH];
+    char uri[MAXLINE];
+    char version[HTTP_VERSION];
+    // read packets from client
+    rio rp;
+    memset(&rp, 0, sizeof(rp));
+    rp.fd = connfd;
+    rio_readline(&rp, buf, MAXLINE);
+    sscanf(buf, "%s %s %s", method, uri, version);
 
+    if (strcasecmp(method, "GET")) {
+      char *res = "HTTP/1.1 501 Method Not Implemented\r\n\r\n";
+      rio_write(connfd, res, strlen(res));
+      close(connfd);
+      continue;
+    }
     // invoke the db client program
     if (fork() == 0) {
-      // response
-      char buf[MAXLINE];
-      // read packets from client
-      rio rp;
-      memset(&rp, 0, sizeof(rp));
-      rp.fd = connfd;
-
-      rio_readline(&rp, buf, MAXLINE);
-      while (strcmp(buf, "\r\n")) {
-        printf("%s\n", buf);
-        rio_readline(&rp, buf, MAXLINE);
-      }
-
-      char *envp[] = {"PGHOST=localhost", "PGUSER=postgres", "PGPASSWORD=postgres", "PGPORT=5432", NULL};
+      char *envp[] = {"PGHOST=localhost", "PGUSER=postgres",
+                      "PGPASSWORD=postgres", "PGPORT=5432", NULL};
       char *argp[] = {NULL};
 
       dup2(connfd, STDOUT_FILENO);
