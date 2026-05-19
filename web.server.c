@@ -94,12 +94,15 @@ int main(int argc, char *argv[]) {
                       "PGPASSWORD=postgres", "PGPORT=5432", NULL};
       char *argp[] = {NULL};
 
+      close(listenfd);
+
       dup2(connfd, STDOUT_FILENO);
       if (execve("./db.client", argp, envp) < 0) {
         perror("execve");
         exit(1);
       };
     }
+    close(connfd);
   }
   return 0;
 }
