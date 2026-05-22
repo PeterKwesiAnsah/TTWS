@@ -1,18 +1,31 @@
 #define __GNU_SOURCE
+#include <stddef.h>
+#include <strings.h>
 
 #include "rio.h"
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define BACKLOG 1024
 #define MAXLINE 1024
 #define METHOD_LENGTH 24
 #define HTTP_VERSION 24
+
+const char *supported_urls[] = {"/", "/create_user", "/users/", NULL};
+void client_error(int connfd, int status, const char *msg) {
+  char res[MAXLINE];
+  sprintf(res, "HTTP/1.1 %d %s\r\n\r\n", status, msg);
+  rio_write(connfd, res, strlen(res));
+  close(connfd);
+}
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
@@ -56,6 +69,7 @@ int main(int argc, char *argv[]) {
   }
   freeaddrinfo(result);
   printf("Socket %d listening on port %s\n", listenfd, port);
+LISTENING_LOOP:
   while (1) {
     struct sockaddr_storage client_addr;
     socklen_t addr_len = sizeof(struct sockaddr_storage);
@@ -83,18 +97,90 @@ int main(int argc, char *argv[]) {
     sscanf(buf, "%s %s %s", method, uri, version);
 
     if (strcasecmp(method, "GET")) {
-      char *res = "HTTP/1.1 501 Method Not Implemented\r\n\r\n";
-      rio_write(connfd, res, strlen(res));
-      close(connfd);
+      client_error(connfd, 501, "Method Not Implemented");
       continue;
+    }
+
+    {
+      int i = 0;
+      const char *cur_uri = supported_urls[i++];
+      size_t uri_len = strlen(uri);
+      while (cur_uri) {
+        size_t cur_uri_len = strlen(cur_uri);
+        if (uri_len == 1 && !strcasecmp(cur_uri, uri))
+          break;
+
+        if (strncmp(cur_uri, uri, cur_uri_len) == 0) {
+          // /create_user or /users
+          if (*(cur_uri + 1) == 'c') {
+            // /create_user
+            if (uri_len > cur_uri_len + 1) {
+              // we send 404 Not Found
+              client_error(connfd, 404, "Not Found");
+              goto LISTENING_LOOP;
+            }
+            // supporting trailing slashes
+            char c = *(char *)(uri + cur_uri_len);
+            if (c != '\0' || c != '/') {
+              // we send 404 Not Found
+              client_error(connfd, 404, "Not Found");
+              goto LISTENING_LOOP;
+            }
+          } else {
+            // /users/
+            if (uri_len == cur_uri_len) {
+              // we send 400 Bad Request
+              client_error(connfd, 400, "Bad Request");
+              goto LISTENING_LOOP;
+            }
+            char *path_params = uri + cur_uri_len;
+            // if there's another slash it should be trailing
+            if ((path_params = strchr(path_params, '/')) == NULL)
+              break;
+            if (!path_params && *(uri + (uri_len - 1)) != '/') {
+              // we send 404 Not Found
+              client_error(connfd, 404, "Not Found");
+              goto LISTENING_LOOP;
+            }
+            break;
+          }
+        }
+        cur_uri = supported_urls[i++];
+      }
+      if (cur_uri == NULL) {
+        client_error(connfd, 404, "Not Found");
+        goto LISTENING_LOOP;
+      }
     }
     // invoke the db client program
     if (fork() == 0) {
+      close(listenfd);
+      if (*(uri + 1) == 'c') {
+        int fd = open("create_user.html", O_RDONLY);
+        if (fd < 0) {
+          client_error(connfd, 500, "Internal Server Error");
+          exit(1);
+        }
+        struct stat st;
+        fstat(fd, &st);
+        sprintf(buf, "HTTP/1.1 200 OK\r\n");
+        // response headers
+        sprintf(buf, "%sContent-Type: text/html\r\n", buf);
+        sprintf(buf, "%sContent-Length: %lu\r\n", buf, st.st_size);
+        sprintf(buf, "%s\r\n", buf);
+
+        rio_write(connfd, buf, strlen(buf));
+        char *fbuf = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+        if (!fbuf) {
+          client_error(connfd, 500, "Internal Server Error");
+          exit(1);
+        }
+        rio_write(connfd, fbuf, st.st_size);
+        exit(1);
+      }
       char *envp[] = {"PGHOST=localhost", "PGUSER=postgres",
                       "PGPASSWORD=postgres", "PGPORT=5432", NULL};
       char *argp[] = {NULL};
-
-      close(listenfd);
 
       dup2(connfd, STDOUT_FILENO);
       if (execve("./db.client", argp, envp) < 0) {
