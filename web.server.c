@@ -16,8 +16,8 @@
 
 #define BACKLOG 1024
 #define MAXLINE 1024
-#define METHOD_LENGTH 24
-#define HTTP_VERSION 24
+#define METHOD_LENGTH 36
+#define HTTP_VERSION 36
 
 const char *supported_urls[] = {"/", "/create_user", "/users/", NULL};
 void client_error(int connfd, int status, const char *msg) {
@@ -178,9 +178,16 @@ LISTENING_LOOP:
         rio_write(connfd, fbuf, st.st_size);
         exit(1);
       }
-      char *envp[] = {"PGHOST=localhost", "PGUSER=postgres",
-                      "PGPASSWORD=postgres", "PGPORT=5432", NULL};
-      char *argp[] = {NULL};
+
+      char *envp[] = {"PGHOST=localhost",
+                      "PGUSER=postgres",
+                      "PGPASSWORD=postgres",
+                      "PGPORT=5432",
+                      uri,
+                      method,
+                      version,
+                      NULL};
+      char *argp[] = {uri, method, version, NULL};
 
       dup2(connfd, STDOUT_FILENO);
       if (execve("./db.client", argp, envp) < 0) {
