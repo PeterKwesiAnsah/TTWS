@@ -187,10 +187,10 @@ LISTENING_LOOP:
                       method,
                       version,
                       NULL};
-      char *argp[] = {uri, method, version, NULL};
+      char *argp[] = {"./db.client", uri, method, version, NULL};
 
       dup2(connfd, STDOUT_FILENO);
-      if (execve("./db.client", argp, envp) < 0) {
+      if (execve(argp[0], argp, envp) < 0) {
         perror("execve");
         exit(1);
       };
