@@ -22,7 +22,7 @@
 const char *supported_urls[] = {"/", "/create_user", "/users/", NULL};
 void client_error(int connfd, int status, const char *msg) {
   char res[MAXLINE];
-  sprintf(res, "HTTP/1.1 %d %s\r\n\r\n", status, msg);
+  snprintf(res, MAXLINE, "HTTP/1.1 %d %s\r\n\r\n", status, msg);
   rio_write(connfd, res, strlen(res));
   close(connfd);
 }
@@ -86,23 +86,32 @@ LISTENING_LOOP:
     else
       printf("Connection from unknown client");
     char buf[MAXLINE];
-    char method[METHOD_LENGTH];
-    char uri[MAXLINE];
-    char version[HTTP_VERSION];
+    char *method, *uri, *version;
+
     // read packets from client
     rio rp;
     memset(&rp, 0, sizeof(rp));
     rp.fd = connfd;
     rio_readline(&rp, buf, MAXLINE);
-    sscanf(buf, "%s %s %s", method, uri, version);
-
-    if (strcasecmp(method, "GET")) {
-      client_error(connfd, 501, "Method Not Implemented");
+    method = buf;
+    uri = strchr(buf, ' ');
+    if (!uri) {
+      close(connfd);
       continue;
     }
+    *uri = '\0';
+    uri = uri + 1;
+    version = strchr(uri, ' ');
+    if (!version) {
+      close(connfd);
+      continue;
+    }
+    *version = '\0';
+    version = version + 1;
 
     {
       int i = 0;
+      // TODO: Check Allowed Methods on URIs
       const char *cur_uri = supported_urls[i++];
       size_t uri_len = strlen(uri);
       while (cur_uri) {
@@ -156,6 +165,7 @@ LISTENING_LOOP:
     if (fork() == 0) {
       close(listenfd);
       if (*(uri + 1) == 'c') {
+        // Handle POST requests
         int fd = open("create_user.html", O_RDONLY);
         if (fd < 0) {
           client_error(connfd, 500, "Internal Server Error");
@@ -163,11 +173,12 @@ LISTENING_LOOP:
         }
         struct stat st;
         fstat(fd, &st);
-        sprintf(buf, "HTTP/1.1 200 OK\r\n");
-        // response headers
-        sprintf(buf, "%sContent-Type: text/html\r\n", buf);
-        sprintf(buf, "%sContent-Length: %lu\r\n", buf, st.st_size);
-        sprintf(buf, "%s\r\n", buf);
+        snprintf(buf, MAXLINE,
+                 "HTTP/1.1 200 OK\r\n"
+                 "Content-Type: text/html\r\n"
+                 "Content-Length: %lu\r\n"
+                 "\r\n",
+                 st.st_size);
 
         rio_write(connfd, buf, strlen(buf));
         char *fbuf = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
