@@ -96,6 +96,7 @@ LISTENING_LOOP:
     method = buf;
     uri = strchr(buf, ' ');
     if (!uri) {
+      // invalid request line
       close(connfd);
       continue;
     }
@@ -103,6 +104,7 @@ LISTENING_LOOP:
     uri = uri + 1;
     version = strchr(uri, ' ');
     if (!version) {
+      // invalid request line
       close(connfd);
       continue;
     }
@@ -112,33 +114,52 @@ LISTENING_LOOP:
     {
       int i = 0;
       // TODO: Check Allowed Methods on URIs
-      const char *cur_uri = supported_urls[i++];
+      const char *cur_uri = supported_urls[i];
       size_t uri_len = strlen(uri);
       while (cur_uri) {
         size_t cur_uri_len = strlen(cur_uri);
         if (uri_len == 1 && !strcasecmp(cur_uri, uri))
           break;
 
+        printf("request uri: %s (%lu) application uri: %s (%lu)\n", uri,
+               uri_len, cur_uri, cur_uri_len);
+        if (strlen(cur_uri) == 1) {
+          cur_uri = supported_urls[++i];
+          continue;
+        }
         if (strncmp(cur_uri, uri, cur_uri_len) == 0) {
           // /create_user or /users
-          if (*(cur_uri + 1) == 'c') {
+          if (*(uri + 1) == 'c') {
+            printf("Create_User\n");
             // /create_user
-            if (uri_len > cur_uri_len + 1) {
-              // we send 404 Not Found
-              client_error(connfd, 404, "Not Found");
-              goto LISTENING_LOOP;
+            if (*(uri + cur_uri_len) == '/' || *(uri + cur_uri_len) == '?' ||
+                *(uri + cur_uri_len) == '\0') {
+
+              if (*(uri + cur_uri_len) == '\0')
+                break;
+
+              if (*(uri + cur_uri_len) == '?') {
+                // trailing ?
+                if (uri_len == cur_uri_len + 1)
+                  break;
+              }
+
+              if (*(uri + cur_uri_len) == '/') {
+                // trailing /
+                if (uri_len == cur_uri_len + 1)
+                  break;
+              }
             }
-            // supporting trailing slashes
-            char c = *(char *)(uri + cur_uri_len);
-            if (c != '\0' || c != '/') {
-              // we send 404 Not Found
-              client_error(connfd, 404, "Not Found");
-              goto LISTENING_LOOP;
-            }
-          } else {
+
+            client_error(connfd, 404, "Not Found");
+            goto LISTENING_LOOP;
+
+          } else if (strncmp(uri, "/users/", 7) == 0) {
+            printf("Users\n");
             // /users/
             if (uri_len == cur_uri_len) {
               // we send 400 Bad Request
+
               client_error(connfd, 400, "Bad Request");
               goto LISTENING_LOOP;
             }
@@ -154,7 +175,7 @@ LISTENING_LOOP:
             break;
           }
         }
-        cur_uri = supported_urls[i++];
+        cur_uri = supported_urls[++i];
       }
       if (cur_uri == NULL) {
         client_error(connfd, 404, "Not Found");
