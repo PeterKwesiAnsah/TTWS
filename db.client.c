@@ -9,6 +9,8 @@
 #define URI_ARG_INDEX 1
 #define METHOD_ARG_INDEX 2
 #define VERSION_ARG_INDEX 3
+#define MAX_COMMAND_LENGTH 1024
+#define BODY_BUFFER_SIZE 1024
 
 void client_error(int connfd, int status, const char *msg) {
   char res[MAXLINE];
@@ -16,8 +18,9 @@ void client_error(int connfd, int status, const char *msg) {
   rio_write(connfd, res, strlen(res));
   close(connfd);
 }
-// Create a single open connection (using environmental variables corresponding
-// to the parameters ) to the database server (PgConn *)
+// TODO: handle premature client connection closure
+//  Create a single open connection (using environmental variables corresponding
+//  to the parameters ) to the database server (PgConn *)
 int main(int argc, char *argv[]) {
   if (argc != 4) {
     fprintf(stderr, "Usage: %s <uri> <method> <version>\n", argv[0]);
@@ -28,29 +31,36 @@ int main(int argc, char *argv[]) {
   PGconn *dbconn =
       PQconnectdbParams((const char *[]){NULL}, (const char *[]){NULL}, 0);
   if (PQstatus(dbconn) != CONNECTION_OK) {
-    // fprintf(stderr, "Connection to database failed\n");
-    char buf[MAXLINE];
-    char res[MAXLINE];
-    sprintf(res, "Server could not connect to the database server:%s\r\n",
-            PQerrorMessage(dbconn));
-    sprintf(buf, "HTTP/1.1 500 Internal Server Error\r\n");
+    char html_res[MAXLINE];
+    char body[BODY_BUFFER_SIZE];
+    snprintf(body, BODY_BUFFER_SIZE,
+             "<!doctype html>"
+             "<html>"
+             "<head><title>Database Error</title></head>"
+             "<body><span style='color:red;'>Server could not connect to the "
+             "database server: %s</span></body>"
+             "</html>",
+             PQerrorMessage(dbconn));
+    snprintf(html_res, MAXLINE,
+             "HTTP/1.1 500 Internal Server\r\n"
+             "Content-Type: text/html\r\n"
+             "Content-Length: %lu\r\n"
+             "\r\n"
+             "%s",
+             strlen(body), body);
     // response headers
-    sprintf(buf, "%sContent-Type: text/plain\r\n", buf);
-    sprintf(buf, "%sContent-Length: %lu\r\n", buf, strlen(res));
-    sprintf(buf, "%s\r\n", buf);
-
-    rio_write(STDOUT_FILENO, buf, strlen(buf));
-    rio_write(STDOUT_FILENO, res, strlen(res));
-    close(STDOUT_FILENO);
-    PQfinish(dbconn);
-    return 1;
+    rio_write(STDOUT_FILENO, html_res, strlen(html_res));
+    goto CLEAN_UP;
   }
 
   // uri between /users/<userid> and /
   // users table have id | first_name | last_name columns
   if (argv[URI_ARG_INDEX] && strlen(argv[URI_ARG_INDEX]) == 1) {
     // /
-  } else {
+    client_error(STDOUT_FILENO, 501, "Not Implemented");
+    PQfinish(dbconn);
+    exit(1);
+  } else if (strncmp(argv[URI_ARG_INDEX], "/users/", 7) == 0) {
     // /users/<user-id
     char *suser_id = argv[URI_ARG_INDEX] + strlen("/users/");
     char *endptr;
@@ -61,7 +71,87 @@ int main(int argc, char *argv[]) {
       PQfinish(dbconn);
       exit(1);
     }
+    char command[MAX_COMMAND_LENGTH];
+    snprintf(command, MAX_COMMAND_LENGTH, "SELECT * from users WHERE id = %lu;",
+             user_id);
+
+    PGresult *qresult = PQexec(dbconn, command);
+    ExecStatusType execstype = PQresultStatus(qresult);
+    if (execstype != PGRES_TUPLES_OK) {
+      // send error to client
+      char *html_res = command;
+      char body[BODY_BUFFER_SIZE];
+      snprintf(body, BODY_BUFFER_SIZE,
+               "<!doctype html>"
+               "<html>"
+               "<head><title>Database Error</title></head>"
+               "<body><span style='color:red;'>Error %d: %s</span></body>"
+               "</html>",
+               execstype, PQresStatus(execstype));
+      snprintf(html_res, MAX_COMMAND_LENGTH,
+               "HTTP/1.1 500 Internal Server\r\n"
+               "Content-Type: text/html\r\n"
+               "Content-Length: %lu\r\n"
+               "\r\n"
+               "%s",
+               strlen(html_res), html_res);
+      rio_write(STDOUT_FILENO, body, strlen(body));
+      PQclear(qresult);
+      goto CLEAN_UP;
+    }
+    int rowscount = PQntuples(qresult);
+    // if rowscount is 0, user not found
+    if (rowscount == 0) {
+      char *html_res = command;
+      char body[BODY_BUFFER_SIZE];
+      snprintf(body, BODY_BUFFER_SIZE,
+               "<!doctype html>"
+               "<html>"
+               "<head><title>User: Not Found</title></head>"
+               "<body><span style='color:red;'>No User Found</span></body>"
+               "</html>");
+      snprintf(html_res, MAX_COMMAND_LENGTH,
+               "HTTP/1.1 404 Not Found\r\n"
+               "Content-Type: text/html\r\n"
+               "Content-Length: %lu\r\n"
+               "\r\n"
+               "%s",
+               strlen(body), body);
+      rio_write(STDOUT_FILENO, html_res, strlen(html_res));
+      PQclear(qresult);
+      goto CLEAN_UP;
+    }
+
+    char *html_res = command;
+    char body[BODY_BUFFER_SIZE];
+
+    snprintf(body, BODY_BUFFER_SIZE,
+             "<!doctype html>"
+             "<html>"
+             "<head><title>User: %lu</title></head>"
+             "<body>"
+             "<span>First Name: %s</span></br>"
+             "<span>Last Name: %s</span></br>"
+             "<button><a href='/create_user'>Add New User</a></button>"
+             "</body>"
+             "</html>",
+             user_id, PQgetvalue(qresult, 0, 1), PQgetvalue(qresult, 0, 2));
+
+    snprintf(html_res, MAX_COMMAND_LENGTH,
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: text/html\r\n"
+             "Content-Length: %zu\r\n"
+             "\r\n"
+             "%s",
+             strlen(body), body);
+    rio_write(STDOUT_FILENO, html_res, strlen(html_res));
+    PQclear(qresult);
+  } else {
+    // POST create_user
+    client_error(STDOUT_FILENO, 400, "Bad Request");
+    PQfinish(dbconn);
   }
+CLEAN_UP:
   close(STDOUT_FILENO);
   PQfinish(dbconn);
   return 0;
