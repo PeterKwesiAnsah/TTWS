@@ -1,3 +1,4 @@
+#include "common.h"
 #include "rio.h"
 #include <postgresql/libpq-fe.h>
 #include <stddef.h>
@@ -19,6 +20,7 @@ void client_error(int connfd, int status, const char *msg) {
   close(connfd);
 }
 // TODO: handle premature client connection closure
+// TODO: Find a way to parse and generate HTML Pages from HTML templates like showing error or success messages
 //  Create a single open connection (using environmental variables corresponding
 //  to the parameters ) to the database server (PgConn *)
 int main(int argc, char *argv[]) {
@@ -146,10 +148,84 @@ int main(int argc, char *argv[]) {
              strlen(body), body);
     rio_write(STDOUT_FILENO, html_res, strlen(html_res));
     PQclear(qresult);
+    goto CLEAN_UP;
   } else {
+    PGresult *qresult = PQexec(dbconn, "SELECT count(*) from users;");
+    ExecStatusType execstype = PQresultStatus(qresult);
+    // TODO: put database error inside a function
+    if (execstype != PGRES_COMMAND_OK) {
+      // send error to client
+      char html_res[MAX_COMMAND_LENGTH];
+      char body[BODY_BUFFER_SIZE];
+      snprintf(body, BODY_BUFFER_SIZE,
+               "<!doctype html>"
+               "<html>"
+               "<head><title>Database Error</title></head>"
+               "<body><span style='color:red;'>Error %d: %s</span></body>"
+               "</html>",
+               execstype, PQresStatus(execstype));
+      snprintf(html_res, MAX_COMMAND_LENGTH,
+               "HTTP/1.1 500 Internal Server\r\n"
+               "Content-Type: text/html\r\n"
+               "Content-Length: %lu\r\n"
+               "\r\n"
+               "%s",
+               strlen(body), body);
+      rio_write(STDOUT_FILENO, html_res, strlen(html_res));
+      PQclear(qresult);
+      goto CLEAN_UP;
+    }
+    int user_count = atoi(PQgetvalue(qresult, 0, 0));
+    PQclear(qresult);
+
+    //?first_name=&last_name=
+    char fn_queryValue[64];
+    char ln_queryValue[64];
+
+    if (getQueryValue(argv[URI_ARG_INDEX], "first_name", fn_queryValue,
+                      sizeof(fn_queryValue))) {
+      // we can 1) send a 400 or 2) serve /create_user but with an error message
+      // for the sake of simplicity, we will do 1
+    };
+    if (getQueryValue(argv[URI_ARG_INDEX], "last_name", ln_queryValue,
+                      sizeof(ln_queryValue))) {
+    };
+    // TODO: Check for empty strings or whitespace
+    char command[MAX_COMMAND_LENGTH];
+    snprintf(command, MAX_COMMAND_LENGTH,
+             "INSERT INTO users VALUES ( %d, %s, %s);", user_count + 1,
+             fn_queryValue, ln_queryValue);
+
+    qresult = PQexec(dbconn, command);
+    execstype = PQresultStatus(qresult);
+    // TODO: put database error inside a function
+    if (execstype != PGRES_COMMAND_OK) {
+      // send error to client
+      char *html_res = command;
+      char body[BODY_BUFFER_SIZE];
+      snprintf(body, BODY_BUFFER_SIZE,
+               "<!doctype html>"
+               "<html>"
+               "<head><title>Database Error</title></head>"
+               "<body><span style='color:red;'>Error %d: %s</span></body>"
+               "</html>",
+               execstype, PQresStatus(execstype));
+      snprintf(html_res, MAX_COMMAND_LENGTH,
+               "HTTP/1.1 500 Internal Server\r\n"
+               "Content-Type: text/html\r\n"
+               "Content-Length: %lu\r\n"
+               "\r\n"
+               "%s",
+               strlen(body), body);
+      rio_write(STDOUT_FILENO, html_res, strlen(html_res));
+      PQclear(qresult);
+      goto CLEAN_UP;
+    }
+
     // POST create_user
     client_error(STDOUT_FILENO, 400, "Bad Request");
     PQfinish(dbconn);
+    goto CLEAN_UP;
   }
 CLEAN_UP:
   close(STDOUT_FILENO);
